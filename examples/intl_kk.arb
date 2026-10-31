@@ -1,0 +1,34 @@
+{
+  "@@locale": "kk",
+
+  "@@comment": "COMMON",
+  "buttonCancel": "Болдырмау",
+  "buttonBuy": "Сатып алу туралы толық ақпарат алу үшін",
+  "buttonRepeat": "Qayta urinib ko‘ring",
+  "profile": "Профиль",
+  "settingsTitle": "Баптаулар",
+  "errorUnknown": "Неизвестная ошибка",
+
+  "@@comment": "SHOP",
+  "shopTitle": "Дүкен",
+  "tabGarage": "Гараж туралы толық ақпарат алу үшін",
+  "priceLabel": "Бағасы: price",
+  "buyFor": "{price}-ге сатып алу",
+  "itemsCount": "{count, plural, one{{count} зат} other{{count} зат}}",
+
+  "@@comment": "SOCIAL",
+  "welcomePlayer": "Қош келдің, {name}!",
+  "sendGift": "{name}-ға сыйлық жіберу",
+  "giftSent": "Сыйлық жіберілді",
+  "rewardTitle": "Сыйлык",
+  "dailyRewardDesc": "Күн сайын кіріп, сыйлық алыңыз",
+  "factionJoin": "Фракцияға кіру",
+  "familyTitle": "Отбасы",
+  "familyInvite": "Отбасына шақыру",
+  "accountDelete": "Тіркелгіні жою",
+  "accountLink": "Тіркелгіні байланыстыру",
+  "accountSwitch": "Тіркелгіні ауыстыру",
+  "accountSaved": "Есеп сақталды",
+  "levelRequired": "{leve} деңгей қажет",
+  "eventName": "SUMMER RUSH"
+}

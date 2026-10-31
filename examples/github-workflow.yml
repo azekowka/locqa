@@ -1,0 +1,29 @@
+# Copy to .github/workflows/l10n-qa.yml in the game client repository.
+name: Localization QA
+
+on:
+  pull_request:
+    paths:
+      - "lib/l10n/**.arb"
+
+permissions:
+  contents: read
+  pull-requests: write      # sticky summary comment
+  security-events: write    # only needed with upload-sarif: true
+
+jobs:
+  locqa:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: azekowka/locqa@main
+        with:
+          source: lib/l10n/intl_ru.arb
+          targets: lib/l10n/intl_kk.arb lib/l10n/intl_uz.arb
+          pivots: en=lib/l10n/intl_en.arb
+          glossary: l10n/glossary.csv
+          fail-on: high
+          only-new: "true"
+          upload-sarif: "false"

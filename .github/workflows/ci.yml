@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: python -m pip install -e ".[dev]"
+      - run: python -m pytest -q
+
+  gen-l10n:
+    # The ARB files locqa writes must still compile with Flutter.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - run: bash scripts/check_gen_l10n.sh examples/intl_ru.arb examples/intl_kk.arb examples/intl_en.arb
+
+  self-check:
+    # Dogfood the composite action on the synthetic example files.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./
+        with:
+          source: examples/intl_ru.arb
+          targets: examples/intl_kk.arb
+          pivots: en=examples/intl_en.arb
+          fail-on: none

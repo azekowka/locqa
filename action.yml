@@ -1,0 +1,143 @@
+name: "locqa: ARB localization QA"
+description: "Checks Flutter ARB translations against the source language and reports issues on pull requests"
+branding:
+  icon: globe
+  color: blue
+
+inputs:
+  source:
+    description: "Source-language ARB file, e.g. lib/l10n/intl_ru.arb"
+    required: true
+  targets:
+    description: "Space-separated target ARB files to check"
+    required: true
+  glossary:
+    description: "Optional glossary CSV"
+    required: false
+    default: ""
+  pivots:
+    description: "Optional space-separated LANG=PATH pairs used as extra context, e.g. en=lib/l10n/intl_en.arb"
+    required: false
+    default: ""
+  fail-on:
+    description: "Fail when a finding of this severity or worse is reported: high, medium, low or none"
+    required: false
+    default: "high"
+  min-confidence:
+    description: "Findings below this confidence are advisory only"
+    required: false
+    default: "0.5"
+  only-new:
+    description: "On pull requests, report only findings that are not already present on the base branch"
+    required: false
+    default: "true"
+  upload-sarif:
+    description: "Upload SARIF to GitHub code scanning (needs security-events: write)"
+    required: false
+    default: "false"
+  comment:
+    description: "Post or update a summary comment on the pull request (needs pull-requests: write)"
+    required: false
+    default: "true"
+  output-dir:
+    description: "Where reports are written"
+    required: false
+    default: "locqa-report"
+  python-version:
+    description: "Python version used to run locqa"
+    required: false
+    default: "3.12"
+
+outputs:
+  status:
+    description: "Exit status of the check (0 = passed)"
+    value: ${{ steps.check.outputs.status }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install locqa
+      shell: bash
+      run: python -m pip install --quiet "${{ github.action_path }}"
+
+    - name: Build baseline from the base branch
+      if: github.event_name == 'pull_request' && inputs.only-new == 'true'
+      shell: bash
+      env:
+        SOURCE: ${{ inputs.source }}
+        TARGETS: ${{ inputs.targets }}
+        PIVOTS: ${{ inputs.pivots }}
+        GLOSSARY: ${{ inputs.glossary }}
+        BASE_REF: ${{ github.base_ref }}
+        OUT: ${{ inputs.output-dir }}
+      run: |
+        mkdir -p "$OUT/base"
+        git fetch --no-tags --depth=1 origin "$BASE_REF" || exit 0
+        git show "origin/$BASE_REF:$SOURCE" > "$OUT/base/source.arb" 2>/dev/null || exit 0
+        for target in $TARGETS; do
+          name=$(basename "$target" .arb)
+          git show "origin/$BASE_REF:$target" > "$OUT/base/$name.arb" 2>/dev/null || continue
+          args=(--source "$OUT/base/source.arb" --target "$OUT/base/$name.arb" --out "$OUT/base/$name.json" --no-html --quiet)
+          [ -n "$GLOSSARY" ] && [ -f "$GLOSSARY" ] && args+=(--glossary "$GLOSSARY")
+          for pivot in $PIVOTS; do args+=(--pivot "$pivot"); done
+          locqa check "${args[@]}" || true
+        done
+
+    - name: Check ARB files
+      id: check
+      shell: bash
+      env:
+        SOURCE: ${{ inputs.source }}
+        TARGETS: ${{ inputs.targets }}
+        PIVOTS: ${{ inputs.pivots }}
+        GLOSSARY: ${{ inputs.glossary }}
+        FAIL_ON: ${{ inputs.fail-on }}
+        MIN_CONFIDENCE: ${{ inputs.min-confidence }}
+        OUT: ${{ inputs.output-dir }}
+      run: |
+        mkdir -p "$OUT"
+        : > "$OUT/summary.md"
+        status=0
+        for target in $TARGETS; do
+          name=$(basename "$target" .arb)
+          args=(--source "$SOURCE" --target "$target" --out "$OUT/$name.json" --sarif "$OUT/$name.sarif"
+                --markdown "$OUT/summary.md" --min-confidence "$MIN_CONFIDENCE" --fail-on "$FAIL_ON")
+          [ -n "$GLOSSARY" ] && args+=(--glossary "$GLOSSARY")
+          for pivot in $PIVOTS; do args+=(--pivot "$pivot"); done
+          [ -f "$OUT/base/$name.json" ] && args+=(--baseline "$OUT/base/$name.json")
+          locqa check "${args[@]}" || status=$?
+        done
+        cat "$OUT/summary.md" >> "$GITHUB_STEP_SUMMARY"
+        echo "status=$status" >> "$GITHUB_OUTPUT"
+
+    - name: Upload reports
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: locqa-report
+        path: ${{ inputs.output-dir }}
+
+    - name: Upload SARIF
+      if: always() && inputs.upload-sarif == 'true'
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ inputs.output-dir }}
+        category: locqa
+
+    - name: Comment on the pull request
+      if: always() && github.event_name == 'pull_request' && inputs.comment == 'true'
+      uses: marocchino/sticky-pull-request-comment@v2
+      with:
+        header: locqa
+        path: ${{ inputs.output-dir }}/summary.md
+
+    - name: Fail on findings
+      if: steps.check.outputs.status != '0'
+      shell: bash
+      run: |
+        echo "locqa found issues at or above severity '${{ inputs.fail-on }}'"
+        exit 1

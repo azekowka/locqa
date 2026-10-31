@@ -1,0 +1,17 @@
+name: l10n_check
+description: Compiles ARB files with flutter gen-l10n to prove they stay valid.
+publish_to: none
+version: 0.0.1
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  intl: any
+
+flutter:
+  generate: true

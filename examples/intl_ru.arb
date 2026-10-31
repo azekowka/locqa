@@ -1,0 +1,39 @@
+{
+  "@@locale": "ru",
+
+  "@@comment": "COMMON",
+  "buttonCancel": "Отмена",
+  "buttonBuy": "Купить",
+  "buttonRepeat": "Повторить",
+  "profile": "Профиль",
+  "settingsTitle": "Настройки",
+  "errorUnknown": "Неизвестная ошибка",
+
+  "@@comment": "SHOP",
+  "shopTitle": "Магазин",
+  "tabGarage": "Гараж",
+  "priceLabel": "Цена: {price}",
+  "buyFor": "Купить за {price}",
+  "itemsCount": "{count, plural, one{{count} предмет} few{{count} предмета} many{{count} предметов} other{{count} предмета}}",
+  "@itemsCount": {
+    "description": "Number of items in the cart",
+    "placeholders": {"count": {"type": "int"}}
+  },
+
+  "@@comment": "SOCIAL",
+  "welcomePlayer": "Добро пожаловать, {name}!",
+  "sendGift": "Отправить подарок игроку {name}",
+  "giftSent": "Подарок отправлен",
+  "giftReceived": "Вы получили подарок",
+  "rewardTitle": "Подарок",
+  "dailyRewardDesc": "Заходите каждый день и получайте подарок",
+  "factionJoin": "Вступить во фракцию",
+  "familyTitle": "Семья",
+  "familyInvite": "Пригласить в семью",
+  "accountDelete": "Удалить аккаунт",
+  "accountLink": "Привязать аккаунт",
+  "accountSwitch": "Сменить аккаунт",
+  "accountSaved": "Аккаунт сохранён",
+  "levelRequired": "Требуется {level} уровень",
+  "eventName": "SUMMER RUSH"
+}

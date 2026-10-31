@@ -1,0 +1,35 @@
+{
+  "@@locale": "en",
+
+  "@@comment": "COMMON",
+  "buttonCancel": "Cancel",
+  "buttonBuy": "Buy",
+  "buttonRepeat": "Retry",
+  "profile": "Profile",
+  "settingsTitle": "Settings",
+  "errorUnknown": "Unknown error",
+
+  "@@comment": "SHOP",
+  "shopTitle": "Shop",
+  "tabGarage": "Garage",
+  "priceLabel": "Price: {price}",
+  "buyFor": "Buy for {price}",
+  "itemsCount": "{count, plural, one{{count} item} other{{count} items}}",
+
+  "@@comment": "SOCIAL",
+  "welcomePlayer": "Welcome, {name}!",
+  "sendGift": "Send a gift to {name}",
+  "giftSent": "Gift sent",
+  "giftReceived": "You received a gift",
+  "rewardTitle": "Gift",
+  "dailyRewardDesc": "Log in every day to get a gift",
+  "factionJoin": "Join a faction",
+  "familyTitle": "Family",
+  "familyInvite": "Invite to family",
+  "accountDelete": "Delete account",
+  "accountLink": "Link account",
+  "accountSwitch": "Switch account",
+  "accountSaved": "Account saved",
+  "levelRequired": "Level {level} required",
+  "eventName": "SUMMER RUSH"
+}

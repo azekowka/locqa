@@ -1,0 +1,1078 @@
+{#- locqa HTML report. Inline scripts are captured first so their SHA-256 can go into the CSP below. -#}
+{% set theme_js %}{% raw %}(function(){try{var t=localStorage.getItem('locqa-theme');if(t==='light'||t==='dark'){document.documentElement.setAttribute('data-theme',t);}}catch(e){}})();{% endraw %}{% endset %}
+{% set app_js %}{% raw %}
+(function () {
+  'use strict';
+  var doc = document;
+  var root = doc.documentElement;
+  var NONE = '\u0000';
+  var SEV = { high: 0, medium: 1, low: 2 };
+  var PAGE = 50;
+  var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  function $(id) { return doc.getElementById(id); }
+  function el(tag, cls, text) {
+    var node = doc.createElement(tag);
+    if (cls) node.className = cls;
+    if (text !== undefined && text !== null) node.textContent = String(text);
+    return node;
+  }
+  function add(parent) {
+    for (var i = 1; i < arguments.length; i++) {
+      var child = arguments[i];
+      if (child === null || child === undefined || child === false) continue;
+      parent.appendChild(typeof child === 'string' ? doc.createTextNode(child) : child);
+    }
+    return parent;
+  }
+  function fmt(n) { return Number(n).toLocaleString('en-US'); }
+  function plural(n, one, many) { return fmt(n) + ' ' + (n === 1 ? one : many); }
+  function btn(cls, text, label) {
+    var b = el('button', cls, text);
+    b.type = 'button';
+    if (label) b.setAttribute('aria-label', label);
+    return b;
+  }
+  function fail(message) {
+    var box = $('list') || doc.body;
+    box.textContent = '';
+    add(box, el('p', 'notice error', message));
+  }
+
+  /* ---- theme ---------------------------------------------------------- */
+  var THEMES = ['auto', 'light', 'dark'];
+  var theme = root.getAttribute('data-theme') || 'auto';
+  function showTheme() {
+    var b = $('theme');
+    if (b) { b.textContent = 'Theme: ' + theme; b.setAttribute('aria-label', 'Colour theme: ' + theme + '. Click to change.'); }
+  }
+  showTheme();
+  if ($('theme')) {
+    $('theme').addEventListener('click', function () {
+      theme = THEMES[(THEMES.indexOf(theme) + 1) % THEMES.length];
+      if (theme === 'auto') root.removeAttribute('data-theme'); else root.setAttribute('data-theme', theme);
+      try { localStorage.setItem('locqa-theme', theme); } catch (e) { /* storage unavailable */ }
+      showTheme();
+    });
+  }
+
+  /* ---- data ----------------------------------------------------------- */
+  var DATA;
+  try {
+    DATA = JSON.parse($('locqa-data').textContent);
+  } catch (e) {
+    fail('The embedded report data could not be read: ' + e.message);
+    return;
+  }
+  var META = DATA.meta || {};
+  var TYPES = DATA.issue_types || {};
+  var FINDINGS = DATA.findings || [];
+  var ADVISORY = DATA.advisory || [];
+  var LINT = DATA.lint || [];
+
+  function prep(list) {
+    for (var i = 0; i < list.length; i++) {
+      var f = list[i];
+      f._n = i;
+      f._sec = f.section === null || f.section === undefined ? NONE : String(f.section);
+      f._hay = [f.key, f.source, f.target, f.evidence, f.suggestion, f.section, f.issue_type, f.detector, f.rule, f.message]
+        .filter(function (v) { return v !== null && v !== undefined; }).join('\n').toLowerCase();
+    }
+  }
+  prep(FINDINGS); prep(ADVISORY); prep(LINT);
+
+  function typeTitle(t) { return (TYPES[t] && TYPES[t].title) || t; }
+  function langTag(locale) { return locale ? String(locale).replace(/_/g, '-') : ''; }
+
+  /* ---- copy ----------------------------------------------------------- */
+  function legacyCopy(text) {
+    var area = el('textarea');
+    area.value = text;
+    area.setAttribute('readonly', '');
+    area.style.position = 'fixed';
+    area.style.opacity = '0';
+    doc.body.appendChild(area);
+    area.select();
+    var ok = false;
+    try { ok = doc.execCommand('copy'); } catch (e) { ok = false; }
+    doc.body.removeChild(area);
+    return ok;
+  }
+  function copyText(text, button) {
+    if (!button.hasAttribute('data-label')) button.setAttribute('data-label', button.textContent);
+    function done(ok) {
+      button.textContent = ok ? 'Copied' : 'Copy failed';
+      button.classList.add('flash');
+      clearTimeout(button._t);
+      button._t = setTimeout(function () {
+        button.textContent = button.getAttribute('data-label');
+        button.classList.remove('flash');
+      }, 1200);
+    }
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text).then(function () { done(true); }, function () { done(legacyCopy(text)); });
+    } else {
+      done(legacyCopy(text));
+    }
+  }
+  doc.addEventListener('click', function (event) {
+    var target = event.target.closest ? event.target.closest('[data-copy]') : null;
+    if (target) copyText(target.getAttribute('data-copy'), target);
+  });
+
+  /* ---- text and diff -------------------------------------------------- */
+  var MARK_RE = /(\{[^{}]*\}|<\/?[A-Za-z][^<>]*>)/;
+  function marked(node, text) {
+    var parts = String(text).split(MARK_RE);
+    for (var i = 0; i < parts.length; i++) {
+      if (!parts[i]) continue;
+      if (i % 2 === 1) add(node, el('span', parts[i].charAt(0) === '{' ? 'ph' : 'tag', parts[i]));
+      else add(node, parts[i]);
+    }
+    return node;
+  }
+
+  var TOKEN_RE;
+  try {
+    TOKEN_RE = new RegExp('\\{[^{}\\s]*\\}|\\s+|[\\p{L}\\p{M}\\p{N}_]+|[\\s\\S]', 'gu');
+  } catch (e) {
+    TOKEN_RE = /\{[^{}\s]*\}|\s+|[A-Za-z0-9_À-ɏͰ-ԯ]+|[\s\S]/g;
+  }
+  function tokens(text) { return String(text).match(TOKEN_RE) || []; }
+  function chars(text) { return Array.from ? Array.from(String(text)) : String(text).split(''); }
+
+  function diffSeq(a, b) {
+    var ops = [], n = a.length, m = b.length, s = 0, i, j;
+    while (s < n && s < m && a[s] === b[s]) s++;
+    var ea = n, eb = m;
+    while (ea > s && eb > s && a[ea - 1] === b[eb - 1]) { ea--; eb--; }
+    for (i = 0; i < s; i++) ops.push([0, a[i]]);
+    var N = ea - s, M = eb - s;
+    if (N > 0 && M > 0 && N * M <= 250000) {
+      var W = M + 1, dp = new Uint16Array((N + 1) * W);
+      for (i = N - 1; i >= 0; i--) {
+        for (j = M - 1; j >= 0; j--) {
+          dp[i * W + j] = a[s + i] === b[s + j] ? dp[(i + 1) * W + j + 1] + 1 : Math.max(dp[(i + 1) * W + j], dp[i * W + j + 1]);
+        }
+      }
+      i = 0; j = 0;
+      while (i < N && j < M) {
+        if (a[s + i] === b[s + j]) { ops.push([0, a[s + i]]); i++; j++; }
+        else if (dp[(i + 1) * W + j] >= dp[i * W + j + 1]) { ops.push([-1, a[s + i]]); i++; }
+        else { ops.push([1, b[s + j]]); j++; }
+      }
+      for (; i < N; i++) ops.push([-1, a[s + i]]);
+      for (; j < M; j++) ops.push([1, b[s + j]]);
+    } else {
+      for (i = s; i < ea; i++) ops.push([-1, a[i]]);
+      for (j = s; j < eb; j++) ops.push([1, b[j]]);
+    }
+    for (i = ea; i < n; i++) ops.push([0, a[i]]);
+    return ops;
+  }
+
+  function runs(ops) {
+    var out = [];
+    for (var i = 0; i < ops.length; i++) {
+      var last = out[out.length - 1];
+      if (last && last.op === ops[i][0]) { last.text += ops[i][1]; last.count++; }
+      else out.push({ op: ops[i][0], text: ops[i][1], count: 1 });
+    }
+    return out;
+  }
+
+  function codepoint(ch) {
+    var hex = ch.codePointAt ? ch.codePointAt(0).toString(16) : ch.charCodeAt(0).toString(16);
+    return 'U+' + ('0000' + hex.toUpperCase()).slice(-Math.max(4, hex.length));
+  }
+
+  function charChange(before, after) {
+    var span = el('span', 'chg');
+    var removed = [], added = [];
+    var parts = runs(diffSeq(chars(before), chars(after)));
+    for (var i = 0; i < parts.length; i++) {
+      var p = parts[i];
+      if (p.op === 0) add(span, p.text);
+      else if (p.op < 0) { add(span, el('del', '', p.text)); removed.push(p.text); }
+      else { add(span, el('ins', '', p.text)); added.push(p.text); }
+    }
+    var cps = function (list) { return chars(list.join('')).map(function (c) { return c + ' ' + codepoint(c); }).join(', '); };
+    span.title = '− ' + (cps(removed) || 'nothing') + '   + ' + (cps(added) || 'nothing');
+    return span;
+  }
+
+  function isWord(text) { return /\S/.test(text) && text.length <= 40; }
+
+  function renderDiff(before, after) {
+    var box = el('div', 'diff');
+    var parts = runs(diffSeq(tokens(before), tokens(after)));
+    for (var i = 0; i < parts.length; i++) {
+      var p = parts[i], q = parts[i + 1];
+      if (p.op !== 0 && q && q.op === -p.op && p.count === 1 && q.count === 1 && isWord(p.text) && isWord(q.text)) {
+        var del = p.op < 0 ? p : q, ins = p.op < 0 ? q : p;
+        add(box, charChange(del.text, ins.text));
+        i++;
+      } else if (p.op === 0) {
+        add(box, p.text);
+      } else {
+        var node = el(p.op < 0 ? 'del' : 'ins', /^\s+$/.test(p.text) ? 'ws' : '', p.text);
+        node.title = p.op < 0 ? 'removed' : 'added';
+        add(box, node);
+      }
+    }
+    if (!parts.length) add(box, el('span', 'muted', '(empty)'));
+    return box;
+  }
+
+  /* ---- cards ---------------------------------------------------------- */
+  function confBar(value) {
+    var v = Math.max(0, Math.min(1, Number(value) || 0));
+    var wrap = el('div', 'conf ' + (v >= 0.9 ? 'hi' : v >= 0.6 ? 'mid' : 'lo'));
+    wrap.setAttribute('role', 'meter');
+    wrap.setAttribute('aria-valuemin', '0');
+    wrap.setAttribute('aria-valuemax', '1');
+    wrap.setAttribute('aria-valuenow', String(v));
+    wrap.setAttribute('aria-label', 'Confidence');
+    wrap.title = 'Confidence ' + v.toFixed(2);
+    var bar = el('span', 'bar'), fill = el('span', 'fill');
+    fill.style.width = Math.round(v * 100) + '%';
+    bar.appendChild(fill);
+    return add(wrap, bar, el('span', 'num', v.toFixed(2)));
+  }
+
+  function textCol(label, locale, text) {
+    var col = el('div', 'col');
+    add(col, el('div', 'lbl', label + (locale ? ' · ' + locale : '')));
+    var body = el('div', 'txt');
+    if (locale) body.lang = langTag(locale);
+    if (text === null || text === undefined || text === '') { body.classList.add('empty'); body.textContent = '(empty or missing)'; }
+    else marked(body, text);
+    return add(col, body);
+  }
+
+  function renderFinding(f) {
+    var card = el('article', 'card sev-' + f.severity);
+    var head = el('div', 'card-head');
+    var badges = el('div', 'badges');
+    add(badges, el('span', 'badge sev ' + f.severity, f.severity));
+    var type = el('span', 'badge type', typeTitle(f.issue_type));
+    type.title = f.issue_type + (TYPES[f.issue_type] ? ': ' + TYPES[f.issue_type].short : '');
+    add(badges, type);
+    if (f.reviewed_by_human) add(badges, el('span', 'badge ok', 'reviewed'));
+    var keyRow = el('div', 'keyrow');
+    var copy = btn('copy', 'Copy key', 'Copy key ' + f.key);
+    copy.setAttribute('data-copy', f.key);
+    add(keyRow, el('code', 'key', f.key), copy);
+    var loc = el('div', 'loc');
+    if (f.section !== null && f.section !== undefined) add(loc, el('span', 'section', f.section));
+    if (f.line) add(loc, el('span', 'line', 'line ' + f.line));
+    add(head, badges, keyRow, loc, confBar(f.confidence));
+    add(card, head);
+
+    var pair = el('div', 'pair');
+    add(pair, textCol('Source', META.source_locale, f.source), textCol('Target', META.target_locale, f.target));
+    add(card, pair);
+
+    var evidence = el('p', 'evidence');
+    add(evidence, el('span', 'lbl', 'Evidence'), el('span', 'ev', f.evidence));
+    add(card, evidence);
+
+    if (f.suggestion !== null && f.suggestion !== undefined) {
+      var sug = el('div', 'suggestion');
+      var bar = el('div', 'lbl');
+      var copySug = btn('copy', 'Copy suggestion', 'Copy suggested text');
+      copySug.setAttribute('data-copy', f.suggestion);
+      add(bar, 'Suggestion — diff against target', copySug);
+      add(sug, bar, renderDiff(f.target || '', f.suggestion));
+      add(card, sug);
+    }
+
+    var foot = el('div', 'card-foot');
+    if (f.detector) add(foot, el('span', '', 'detector: ' + f.detector));
+    if (f.also_reported_by && f.also_reported_by.length) {
+      var also = el('details', 'also');
+      add(also, el('summary', '', 'also reported by ' + plural(f.also_reported_by.length, 'detector', 'detectors')));
+      var ul = el('ul');
+      f.also_reported_by.forEach(function (o) {
+        add(ul, el('li', '', (o.detector || '?') + ' (' + Number(o.confidence || 0).toFixed(2) + '): ' + (o.evidence || '')));
+      });
+      add(also, ul);
+      add(foot, also);
+    }
+    var extraKeys = f.extra ? Object.keys(f.extra) : [];
+    if (extraKeys.length) {
+      var more = el('details', 'extra');
+      add(more, el('summary', '', 'details'));
+      var dl = el('dl');
+      extraKeys.forEach(function (k) {
+        var v = f.extra[k];
+        add(dl, el('dt', '', k), el('dd', '', typeof v === 'string' ? v : JSON.stringify(v)));
+      });
+      add(more, dl);
+      add(foot, more);
+    }
+    if (foot.childNodes.length) add(card, foot);
+    return card;
+  }
+
+  function renderLint(item) {
+    var tr = el('tr');
+    var sev = el('td'); add(sev, el('span', 'badge sev ' + item.severity, item.severity));
+    var rule = el('td'); add(rule, el('code', '', item.rule));
+    var key = el('td', 'keycell');
+    var copy = btn('copy small', 'Copy', 'Copy key ' + item.key);
+    copy.setAttribute('data-copy', item.key);
+    add(key, el('code', 'key', item.key), ' ', copy);
+    add(tr, sev, rule, key, el('td', 'num', item.line === null || item.line === undefined ? '' : String(item.line)), el('td', 'msg', item.message));
+    return tr;
+  }
+
+  /* ---- paging --------------------------------------------------------- */
+  function Pager(listEl, moreBtn, render) {
+    this.listEl = listEl;
+    this.moreBtn = moreBtn;
+    this.render = render;
+    this.items = [];
+    this.shown = 0;
+    var self = this;
+    moreBtn.addEventListener('click', function () { self.next(); });
+  }
+  Pager.prototype.set = function (items) {
+    this.items = items;
+    this.shown = 0;
+    this.listEl.textContent = '';
+    this.next();
+  };
+  Pager.prototype.next = function () {
+    var end = Math.min(this.items.length, this.shown + PAGE);
+    var frag = doc.createDocumentFragment();
+    for (var i = this.shown; i < end; i++) frag.appendChild(this.render(this.items[i]));
+    this.listEl.appendChild(frag);
+    this.shown = end;
+    var rest = this.items.length - end;
+    this.moreBtn.hidden = rest <= 0;
+    if (rest > 0) this.moreBtn.textContent = 'Show ' + fmt(Math.min(rest, PAGE)) + ' more (' + fmt(rest) + ' left)';
+  };
+
+  /* ---- filters -------------------------------------------------------- */
+  var state = { types: {}, sevs: {}, section: null, terms: [], sort: 'default' };
+
+  function anySet(o) { for (var k in o) { if (o[k]) return true; } return false; }
+  function matches(f) {
+    if (anySet(state.types) && !state.types[f.issue_type]) return false;
+    if (anySet(state.sevs) && !state.sevs[f.severity]) return false;
+    if (state.section !== null && f._sec !== state.section) return false;
+    for (var i = 0; i < state.terms.length; i++) { if (f._hay.indexOf(state.terms[i]) < 0) return false; }
+    return true;
+  }
+  function cmp(a, b) { return a < b ? -1 : a > b ? 1 : 0; }
+  var SORTS = {
+    'default': function (a, b) { return (SEV[a.severity] - SEV[b.severity]) || (a._n - b._n); },
+    confidence: function (a, b) { return (b.confidence - a.confidence) || (SEV[a.severity] - SEV[b.severity]) || (a._n - b._n); },
+    key: function (a, b) { return cmp(a.key, b.key) || (a._n - b._n); },
+    type: function (a, b) { return cmp(a.issue_type, b.issue_type) || (SEV[a.severity] - SEV[b.severity]) || (a._n - b._n); },
+    line: function (a, b) { return ((a.line || 1e9) - (b.line || 1e9)) || (a._n - b._n); }
+  };
+  function select(list) { return list.filter(matches).sort(SORTS[state.sort] || SORTS['default']); }
+
+  var listEl = $('list'), countEl = $('count');
+  var mainPager = new Pager(listEl, $('more'), renderFinding);
+  var advDetails = $('advisory');
+  var advPager = $('adv-list') ? new Pager($('adv-list'), $('adv-more'), function (f) {
+    var card = renderFinding(f);
+    card.classList.add('advisory');
+    return card;
+  }) : null;
+  var advPending = null;
+
+  /* type menu, severity chips, section select */
+  var typeCounts = {};
+  FINDINGS.forEach(function (f) { typeCounts[f.issue_type] = (typeCounts[f.issue_type] || 0) + 1; });
+  var typeOrder = Object.keys(TYPES).filter(function (t) {
+    return typeCounts[t] || ADVISORY.some(function (f) { return f.issue_type === t; });
+  });
+  FINDINGS.concat(ADVISORY).forEach(function (f) { if (typeOrder.indexOf(f.issue_type) < 0) typeOrder.push(f.issue_type); });
+  typeOrder.sort(function (a, b) { return ((typeCounts[b] || 0) - (typeCounts[a] || 0)) || cmp(a, b); });
+
+  var typeMenu = $('type-menu');
+  var typeBoxes = {};
+  typeOrder.forEach(function (t) {
+    var label = el('label', 'check');
+    var box = el('input');
+    box.type = 'checkbox';
+    box.value = t;
+    box.addEventListener('change', function () { state.types[t] = box.checked; apply(); });
+    typeBoxes[t] = box;
+    add(label, box, el('span', '', typeTitle(t)), el('span', 'n', fmt(typeCounts[t] || 0)));
+    add(typeMenu, label);
+  });
+  if (!typeOrder.length) add(typeMenu, el('p', 'muted', 'No issue types to filter.'));
+
+  var sectionCounts = {}, sectionValues = [];
+  FINDINGS.concat(ADVISORY).forEach(function (f, i) {
+    if (!(f._sec in sectionCounts)) { sectionCounts[f._sec] = 0; sectionValues.push(f._sec); }
+    if (i < FINDINGS.length) sectionCounts[f._sec]++;
+  });
+  sectionValues.sort(function (a, b) { return (sectionCounts[b] - sectionCounts[a]) || cmp(a, b); });
+  var sectionSel = $('section');
+  add(sectionSel, el('option', '', 'All sections'));
+  sectionSel.options[0].value = '';
+  sectionValues.forEach(function (s, i) {
+    var option = el('option', '', (s === NONE ? '(no section)' : s) + ' — ' + fmt(sectionCounts[s]));
+    option.value = String(i);
+    add(sectionSel, option);
+  });
+  sectionSel.addEventListener('change', function () {
+    state.section = sectionSel.value === '' ? null : sectionValues[Number(sectionSel.value)];
+    apply();
+  });
+  function setSection(value) {
+    var idx = value === null ? -1 : sectionValues.indexOf(value);
+    state.section = idx < 0 ? null : value;
+    sectionSel.value = idx < 0 ? '' : String(idx);
+  }
+
+  $('sort').addEventListener('change', function () { state.sort = $('sort').value; apply(); });
+
+  var search = $('q'), searchTimer = null;
+  search.addEventListener('input', function () {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(function () {
+      state.terms = search.value.toLowerCase().split(/\s+/).filter(Boolean);
+      apply();
+    }, 120);
+  });
+  search.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape' && search.value) {
+      search.value = '';
+      state.terms = [];
+      apply();
+      event.stopPropagation();
+    }
+  });
+
+  function toggleSev(sev) { state.sevs[sev] = !state.sevs[sev]; apply(); }
+  function toggleType(t) {
+    state.types[t] = !state.types[t];
+    if (typeBoxes[t]) typeBoxes[t].checked = !!state.types[t];
+    apply();
+  }
+  function reset() {
+    state.types = {}; state.sevs = {}; state.terms = []; state.sort = 'default';
+    search.value = '';
+    $('sort').value = 'default';
+    setSection(null);
+    for (var t in typeBoxes) typeBoxes[t].checked = false;
+    apply();
+  }
+  function showList() {
+    var target = $('findings');
+    if (target && target.getBoundingClientRect().top > window.innerHeight * 0.5) {
+      target.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' });
+    }
+  }
+
+  doc.addEventListener('click', function (event) {
+    var t = event.target.closest ? event.target.closest('[data-sev],[data-type],[data-section],[data-reset],[data-open]') : null;
+    if (!t) return;
+    if (t.hasAttribute('data-open')) {
+      var d = $(t.getAttribute('data-open'));
+      if (d) d.open = true;
+      return;
+    }
+    if (t.hasAttribute('data-reset')) { reset(); showList(); return; }
+    var fromSummary = !t.closest('.filters');
+    if (t.hasAttribute('data-section')) {
+      setSection(t.getAttribute('data-nosection') === '1' ? NONE : t.getAttribute('data-section'));
+      if (t.hasAttribute('data-type')) {
+        state.types = {};
+        for (var k in typeBoxes) typeBoxes[k].checked = false;
+        state.types[t.getAttribute('data-type')] = true;
+        if (typeBoxes[t.getAttribute('data-type')]) typeBoxes[t.getAttribute('data-type')].checked = true;
+      }
+      apply();
+    } else if (t.hasAttribute('data-sev')) {
+      toggleSev(t.getAttribute('data-sev'));
+    } else if (t.hasAttribute('data-type')) {
+      toggleType(t.getAttribute('data-type'));
+    }
+    if (fromSummary) showList();
+  });
+
+  $('reset').addEventListener('click', reset);
+
+  var typeDropdown = $('type-dd');
+  doc.addEventListener('click', function (event) {
+    if (typeDropdown.open && !typeDropdown.contains(event.target)) typeDropdown.open = false;
+  });
+  doc.addEventListener('keydown', function (event) {
+    var tag = (event.target.tagName || '').toLowerCase();
+    var typing = tag === 'input' || tag === 'textarea' || tag === 'select' || event.target.isContentEditable;
+    if (event.key === '/' && !typing && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      event.preventDefault();
+      search.focus();
+      search.select();
+    } else if (event.key === 'Escape' && typeDropdown.open) {
+      typeDropdown.open = false;
+      typeDropdown.querySelector('summary').focus();
+    }
+  });
+
+  function pressed(selector, test) {
+    var nodes = doc.querySelectorAll(selector);
+    for (var i = 0; i < nodes.length; i++) nodes[i].setAttribute('aria-pressed', test(nodes[i]) ? 'true' : 'false');
+  }
+
+  function apply() {
+    var shown = select(FINDINGS);
+    mainPager.set(shown);
+    var filtered = shown.length !== FINDINGS.length;
+    countEl.textContent = FINDINGS.length === 0
+      ? 'No findings above the confidence threshold.'
+      : (filtered ? plural(shown.length, 'finding matches', 'findings match') + ' the filters (of ' + fmt(FINDINGS.length) + ')' : plural(FINDINGS.length, 'finding', 'findings'));
+    if (!shown.length && FINDINGS.length) {
+      var again = btn('linkish', 'Reset filters');
+      again.setAttribute('data-reset', '');
+      add(listEl, add(el('div', 'notice'), 'No findings match these filters. ', again));
+    }
+    if (advPager) {
+      var adv = select(ADVISORY);
+      $('adv-count').textContent = ADVISORY.length
+        ? (adv.length === ADVISORY.length ? plural(adv.length, 'advisory finding', 'advisory findings') : fmt(adv.length) + ' of ' + fmt(ADVISORY.length) + ' advisory findings match the filters above')
+        : 'Nothing below the threshold.';
+      if (advDetails.open) { advPager.set(adv); advPending = null; } else { advPending = adv; }
+    }
+    var picked = [];
+    for (var t in state.types) { if (state.types[t]) picked.push(t); }
+    $('type-label').textContent = picked.length === 0 ? 'all' : picked.length === 1 ? typeTitle(picked[0]) : picked.length + ' selected';
+    pressed('[data-sev]', function (n) { return !!state.sevs[n.getAttribute('data-sev')]; });
+    pressed('.types [data-type]', function (n) { return !!state.types[n.getAttribute('data-type')]; });
+  }
+
+  if (advDetails) {
+    advDetails.addEventListener('toggle', function () {
+      if (advDetails.open && advPending) { advPager.set(advPending); advPending = null; }
+    });
+  }
+
+  /* ---- lint ----------------------------------------------------------- */
+  var lintDetails = $('lint');
+  if (lintDetails && $('lint-body')) {
+    var lintPager = new Pager($('lint-body'), $('lint-more'), renderLint);
+    var lintState = { rule: '', terms: [] };
+    var ruleSel = $('lint-rule');
+    var ruleCounts = {};
+    LINT.forEach(function (l) { ruleCounts[l.rule] = (ruleCounts[l.rule] || 0) + 1; });
+    add(ruleSel, el('option', '', 'All rules'));
+    ruleSel.options[0].value = '';
+    Object.keys(ruleCounts).sort().forEach(function (r) {
+      var option = el('option', '', r + ' — ' + fmt(ruleCounts[r]));
+      option.value = r;
+      add(ruleSel, option);
+    });
+    var lintDirty = true;
+    var applyLint = function () {
+      var rows = LINT.filter(function (l) {
+        if (lintState.rule && l.rule !== lintState.rule) return false;
+        for (var i = 0; i < lintState.terms.length; i++) { if (l._hay.indexOf(lintState.terms[i]) < 0) return false; }
+        return true;
+      });
+      $('lint-count').textContent = rows.length === LINT.length ? plural(LINT.length, 'lint item', 'lint items') : fmt(rows.length) + ' of ' + fmt(LINT.length) + ' lint items';
+      if (lintDetails.open) { lintPager.set(rows); lintDirty = false; } else { lintDirty = true; }
+    };
+    ruleSel.addEventListener('change', function () { lintState.rule = ruleSel.value; applyLint(); });
+    var lintTimer = null;
+    $('lint-q').addEventListener('input', function () {
+      clearTimeout(lintTimer);
+      lintTimer = setTimeout(function () {
+        lintState.terms = $('lint-q').value.toLowerCase().split(/\s+/).filter(Boolean);
+        applyLint();
+      }, 120);
+    });
+    lintDetails.addEventListener('toggle', function () { if (lintDetails.open && lintDirty) applyLint(); });
+    applyLint();
+  }
+
+  /* ---- heatmap -------------------------------------------------------- */
+  var heatMore = $('heat-more');
+  if (heatMore) {
+    heatMore.addEventListener('click', function () {
+      var rows = doc.querySelectorAll('.heat tr.extra');
+      for (var i = 0; i < rows.length; i++) rows[i].hidden = false;
+      heatMore.hidden = true;
+    });
+  }
+
+  function openFromHash() {
+    var id = (location.hash || '').slice(1);
+    if (id === 'advisory' || id === 'lint') { var d = $(id); if (d) d.open = true; }
+  }
+  window.addEventListener('hashchange', openFromHash);
+  openFromHash();
+
+  try { apply(); } catch (e) { fail('The findings list could not be rendered: ' + e.message); }
+  root.classList.add('js');
+})();
+{% endraw %}{% endset %}
+{% set dark_tokens %}{% raw %}
+    --bg: #0f1116; --surface: #171a21; --surface-2: #1d212a; --border: #2b303b; --border-strong: #3a414f;
+    --text: #e7e9ee; --muted: #a3abb8; --faint: #7d8696;
+    --accent: #93a6ff; --accent-soft: #232a47;
+    --high: #ff7b7b; --high-soft: #3b1d21; --medium: #ffb260; --medium-soft: #3a2a18; --low: #7cb9ff; --low-soft: #172a41;
+    --ins: #7ee08f; --ins-bg: #173a22; --del: #ff9a9a; --del-bg: #431f22;
+    --ph: #c3b0ff; --ph-bg: #2b2348; --tag: #8bd3dd; --heat: #ff8f3d; --ok: #63d38b;
+    --shadow: 0 0 0 1px rgba(0, 0, 0, .2);
+    color-scheme: dark;
+{% endraw %}{% endset %}
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src {{ theme_js|csp_hash }} {{ app_js|csp_hash }}; base-uri 'none'; form-action 'none'">
+<meta name="color-scheme" content="light dark">
+<meta name="generator" content="locqa {{ version }}">
+<meta name="robots" content="noindex">
+<title>{{ title }}</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%233b5bdb'/%3E%3Cpath d='M9 8v16h7' stroke='white' stroke-width='3' fill='none' stroke-linecap='round'/%3E%3Ccircle cx='22' cy='18' r='5' stroke='white' stroke-width='3' fill='none'/%3E%3C/svg%3E">
+<script>{{ theme_js|safe }}</script>
+<style>
+{% raw %}
+  :root {
+    --bg: #f5f6f8; --surface: #ffffff; --surface-2: #f0f2f5; --border: #e1e4ea; --border-strong: #cdd2db;
+    --text: #1a1e24; --muted: #59616e; --faint: #858d9a;
+    --accent: #3451c7; --accent-soft: #e9edff;
+    --high: #c22929; --high-soft: #fdeceb; --medium: #a85600; --medium-soft: #fff2df; --low: #2462a8; --low-soft: #e7f0fb;
+    --ins: #18703a; --ins-bg: #d8f3e0; --del: #b0261b; --del-bg: #fde2df;
+    --ph: #5f3dc4; --ph-bg: #efeaff; --tag: #0b7285; --heat: #e8590c; --ok: #237a45;
+    --shadow: 0 1px 2px rgba(16, 24, 40, .05), 0 1px 3px rgba(16, 24, 40, .07);
+    --radius: 10px;
+    --font: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", "Helvetica Neue", Arial, sans-serif;
+    --mono: ui-monospace, "Cascadia Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    color-scheme: light;
+  }
+{% endraw %}
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+{{ dark_tokens|safe }}
+    }
+  }
+  :root[data-theme="dark"] {
+{{ dark_tokens|safe }}
+  }
+{% raw %}
+  *, *::before, *::after { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 var(--font); }
+  code, .mono { font-family: var(--mono); font-size: .92em; }
+  a { color: var(--accent); }
+  h1, h2, h3 { line-height: 1.25; margin: 0; }
+  h2 { font-size: 1.15rem; font-weight: 650; }
+  h3 { font-size: .95rem; font-weight: 650; }
+  button, input, select { font: inherit; color: inherit; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  [hidden] { display: none !important; }
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .skip { position: absolute; left: -999px; top: 8px; background: var(--surface); padding: 6px 10px; border-radius: 6px; z-index: 20; }
+  .skip:focus { left: 16px; }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 16px; }
+  .muted { color: var(--muted); }
+
+  .top { background: var(--surface); border-bottom: 1px solid var(--border); }
+  .top .wrap { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-top: 18px; padding-bottom: 18px; }
+  .brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+  .logo { flex: none; width: 38px; height: 38px; border-radius: 9px; background: var(--accent); color: #fff; display: grid; place-items: center; font-weight: 700; letter-spacing: -.02em; }
+  .brand h1 { font-size: 1.25rem; font-weight: 700; }
+  .brand p { margin: 2px 0 0; color: var(--muted); font-size: .9rem; }
+  .ghost { background: transparent; border: 1px solid var(--border-strong); border-radius: 8px; padding: 6px 12px; cursor: pointer; color: var(--text); white-space: nowrap; }
+  .ghost:hover { background: var(--surface-2); }
+
+  main { padding-top: 20px; padding-bottom: 48px; }
+  section, .fold, .method { margin-top: 24px; }
+  .panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); padding: 16px; }
+  .section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+  .section-head p { margin: 0; color: var(--muted); font-size: .9rem; }
+
+  .meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px 24px; margin: 0; }
+  .meta div { min-width: 0; }
+  .meta dt { color: var(--muted); font-size: .78rem; text-transform: uppercase; letter-spacing: .04em; }
+  .meta dd { margin: 2px 0 0; overflow-wrap: anywhere; }
+  .alert { margin-top: 16px; border: 1px solid var(--high); background: var(--high-soft); border-radius: var(--radius); padding: 12px 16px; }
+  .alert pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .8rem; max-height: 240px; overflow: auto; }
+
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+  .stat { display: block; text-align: left; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); padding: 14px 16px; cursor: pointer; text-decoration: none; color: var(--text); position: relative; }
+  .stat:hover { border-color: var(--border-strong); }
+  .stat .n { display: block; font-size: 1.75rem; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; }
+  .stat .l { display: block; color: var(--muted); font-size: .85rem; margin-top: 4px; }
+  .stat.sev-high .n { color: var(--high); }
+  .stat.sev-medium .n { color: var(--medium); }
+  .stat.sev-low .n { color: var(--low); }
+  .stat[aria-pressed="true"] { border-color: currentColor; box-shadow: 0 0 0 2px var(--accent) inset; }
+  .stat.quiet { background: var(--surface-2); box-shadow: none; }
+
+  .types { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 4px; }
+  .type-row { width: 100%; display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 2fr) 56px; align-items: center; gap: 12px; padding: 7px 10px; background: transparent; border: 1px solid transparent; border-radius: 8px; cursor: pointer; text-align: left; }
+  .type-row:hover { background: var(--surface-2); }
+  .type-row[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); }
+  .type-row .name { font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+  .type-row .name code { display: block; font-weight: 400; color: var(--faint); font-size: .78rem; }
+  .type-row .track { height: 8px; background: var(--surface-2); border-radius: 99px; overflow: hidden; }
+  .type-row .track span { display: block; height: 100%; background: var(--accent); border-radius: 99px; min-width: 3px; }
+  .type-row .n { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+
+  .table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow); }
+  table { border-collapse: collapse; width: 100%; font-size: .88rem; }
+  th, td { padding: 7px 10px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+  thead th { background: var(--surface-2); font-weight: 600; color: var(--muted); position: sticky; top: 0; }
+  tbody tr:last-child > * { border-bottom: 0; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .heat th.vert { vertical-align: bottom; height: 132px; padding: 6px 4px; }
+  .heat th.vert span { writing-mode: vertical-rl; transform: rotate(180deg); white-space: nowrap; font-size: .8rem; }
+  .heat td.cell { position: relative; text-align: center; padding: 0; min-width: 34px; }
+  .heat td.cell::before { content: ""; position: absolute; inset: 2px; border-radius: 4px; background: var(--heat); opacity: calc(var(--h, 0) * .85); }
+  .heat td.cell button, .heat td.cell span { position: relative; display: block; width: 100%; padding: 7px 4px; border: 0; background: transparent; cursor: pointer; font-variant-numeric: tabular-nums; font-weight: 600; }
+  .heat td.cell.hot button { color: #fff; }
+  .heat th[scope="row"] { min-width: 9em; max-width: 280px; }
+  .linkish { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; text-align: left; text-decoration: underline; text-decoration-color: transparent; overflow-wrap: anywhere; font-weight: 500; }
+  .linkish:hover { text-decoration-color: currentColor; }
+  .sev-mini { display: inline-flex; gap: 6px; font-variant-numeric: tabular-nums; }
+  .sev-mini .h { color: var(--high); } .sev-mini .m { color: var(--medium); } .sev-mini .l { color: var(--low); }
+
+  .filters { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 10px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); position: sticky; top: 0; z-index: 6; }
+  .filters input[type="search"] { flex: 1 1 240px; min-width: 0; padding: 7px 10px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--bg); }
+  .filters select { padding: 6px 8px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--bg); max-width: 100%; }
+  .filters label.inline { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: .88rem; max-width: 100%; }
+  .chips { display: inline-flex; gap: 4px; }
+  .chip { border: 1px solid var(--border-strong); background: var(--bg); border-radius: 99px; padding: 4px 11px; cursor: pointer; font-size: .85rem; }
+  .chip[aria-pressed="true"] { color: #fff; border-color: transparent; }
+  .chip.high[aria-pressed="true"] { background: var(--high); }
+  .chip.medium[aria-pressed="true"] { background: var(--medium); }
+  .chip.low[aria-pressed="true"] { background: var(--low); }
+  :root[data-theme="dark"] .chip[aria-pressed="true"] { color: #10131a; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .chip[aria-pressed="true"] { color: #10131a; } }
+  .dropdown { position: relative; }
+  .dropdown > summary { list-style: none; cursor: pointer; border: 1px solid var(--border-strong); border-radius: 8px; padding: 6px 10px; background: var(--bg); white-space: nowrap; font-size: .9rem; }
+  .dropdown > summary::-webkit-details-marker { display: none; }
+  .dropdown > summary::after { content: " \25BE"; color: var(--muted); }
+  .dropdown .menu { position: absolute; z-index: 10; top: calc(100% + 6px); left: 0; min-width: 260px; max-height: 340px; overflow: auto; background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius); box-shadow: 0 8px 28px rgba(0, 0, 0, .18); padding: 6px; }
+  .check { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; cursor: pointer; }
+  .check:hover { background: var(--surface-2); }
+  .check .n { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .count { color: var(--muted); margin: 12px 2px 8px; font-size: .9rem; }
+
+  .list { display: grid; gap: 12px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--faint); border-radius: var(--radius); box-shadow: var(--shadow); padding: 14px 16px; min-width: 0; }
+  .card.sev-high { border-left-color: var(--high); }
+  .card.sev-medium { border-left-color: var(--medium); }
+  .card.sev-low { border-left-color: var(--low); }
+  .card.advisory { opacity: .92; }
+  .card-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+  .badges { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+  .badge { display: inline-block; font-size: .75rem; font-weight: 650; border-radius: 6px; padding: 2px 8px; line-height: 1.5; white-space: nowrap; }
+  .badge.sev { text-transform: uppercase; letter-spacing: .04em; }
+  .badge.high { background: var(--high-soft); color: var(--high); }
+  .badge.medium { background: var(--medium-soft); color: var(--medium); }
+  .badge.low { background: var(--low-soft); color: var(--low); }
+  .badge.type { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); }
+  .badge.ok { background: transparent; color: var(--ok); border: 1px solid currentColor; }
+  .keyrow { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+  .key { font-weight: 600; overflow-wrap: anywhere; }
+  .copy { border: 1px solid var(--border-strong); background: transparent; border-radius: 6px; padding: 1px 8px; font-size: .75rem; cursor: pointer; color: var(--muted); white-space: nowrap; }
+  .copy:hover { color: var(--text); background: var(--surface-2); }
+  .copy.flash { color: var(--ok); border-color: var(--ok); }
+  .loc { display: inline-flex; gap: 8px; color: var(--muted); font-size: .82rem; flex-wrap: wrap; min-width: 0; }
+  .loc .section { overflow-wrap: anywhere; }
+  .loc .section::before { content: "\00a7 "; }
+  .conf { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; font-size: .82rem; color: var(--muted); }
+  .conf .bar { width: 72px; height: 6px; background: var(--surface-2); border-radius: 99px; overflow: hidden; border: 1px solid var(--border); }
+  .conf .fill { display: block; height: 100%; background: var(--accent); }
+  .conf.mid .fill { background: var(--medium); }
+  .conf.lo .fill { background: var(--faint); }
+  .conf .num { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--text); }
+  .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
+  .col { min-width: 0; }
+  .lbl { color: var(--muted); font-size: .75rem; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
+  .txt, .diff { background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; white-space: pre-wrap; overflow-wrap: anywhere; min-height: 2.3em; }
+  .txt.empty { color: var(--faint); font-style: italic; }
+  .ph { color: var(--ph); background: var(--ph-bg); border-radius: 4px; font-family: var(--mono); font-size: .9em; padding: 0 2px; }
+  .tag { color: var(--tag); font-family: var(--mono); font-size: .9em; }
+  .evidence { margin: 12px 0 0; display: flex; gap: 10px; align-items: baseline; }
+  .evidence .lbl { flex: none; margin: 0; }
+  .ev { overflow-wrap: anywhere; }
+  .suggestion { margin-top: 10px; }
+  del, ins { text-decoration: none; border-radius: 3px; padding: 0 1px; }
+  del { background: var(--del-bg); color: var(--del); text-decoration: line-through; text-decoration-thickness: 1px; }
+  ins { background: var(--ins-bg); color: var(--ins); }
+  del.ws, ins.ws { text-decoration: none; }
+  .chg { border-bottom: 1px dotted var(--muted); }
+  .card-foot { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px 16px; color: var(--faint); font-size: .8rem; }
+  .card-foot details summary { cursor: pointer; }
+  .card-foot ul, .card-foot dl { margin: 6px 0 0; padding-left: 18px; color: var(--muted); }
+  .card-foot dl { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; padding-left: 0; }
+  .card-foot dt { font-family: var(--mono); }
+  .card-foot dd { margin: 0; overflow-wrap: anywhere; }
+  .more { display: block; margin: 14px auto 0; padding: 9px 18px; border-radius: 8px; border: 1px solid var(--border-strong); background: var(--surface); cursor: pointer; }
+  .more:hover { background: var(--surface-2); }
+  .notice { background: var(--surface); border: 1px dashed var(--border-strong); border-radius: var(--radius); padding: 14px 16px; color: var(--muted); }
+  .notice.error { border-color: var(--high); color: var(--high); }
+
+  .fold { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); }
+  .fold > summary { cursor: pointer; padding: 14px 16px; display: flex; align-items: center; gap: 10px; list-style: none; }
+  .fold > summary::-webkit-details-marker { display: none; }
+  .fold > summary::before { content: "\25B8"; color: var(--muted); transition: transform .15s; }
+  .fold[open] > summary::before { transform: rotate(90deg); }
+  .fold > summary h2 { font-size: 1.05rem; }
+  .pill { background: var(--surface-2); border: 1px solid var(--border); border-radius: 99px; padding: 0 9px; font-size: .82rem; font-variant-numeric: tabular-nums; color: var(--muted); }
+  .fold-body { padding: 0 16px 16px; }
+  .fold-body > p { margin: 0 0 10px; color: var(--muted); font-size: .9rem; }
+  .fold .filters { position: static; box-shadow: none; margin-bottom: 10px; }
+  .lint td.msg { overflow-wrap: anywhere; min-width: 240px; }
+  .lint td.keycell { overflow-wrap: anywhere; min-width: 160px; }
+  .copy.small { margin-left: 2px; }
+
+  .method { color: var(--text); }
+  .method .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; margin-top: 12px; }
+  .method p, .method li { color: var(--muted); font-size: .9rem; }
+  .method ul { padding-left: 18px; margin: 8px 0 0; }
+  .method dl { margin: 8px 0 0; }
+  .method dt { font-weight: 600; margin-top: 8px; }
+  .method dt code { font-weight: 400; color: var(--faint); margin-left: 6px; }
+  .method dd { margin: 2px 0 0; color: var(--muted); font-size: .88rem; }
+  .rubric { list-style: none; padding: 0; margin: 8px 0 0; display: grid; gap: 8px; }
+  .rubric li { display: flex; gap: 10px; align-items: baseline; }
+  .rubric .badge { flex: none; min-width: 64px; text-align: center; }
+  .foot { margin-top: 28px; color: var(--faint); font-size: .8rem; text-align: center; }
+
+  @media (max-width: 720px) {
+    body { font-size: 14.5px; }
+    .top .wrap { padding-top: 14px; padding-bottom: 14px; }
+    .brand h1 { font-size: 1.1rem; }
+    .pair { grid-template-columns: 1fr; }
+    .filters { position: static; }
+    .filters input[type="search"] { flex-basis: 100%; }
+    .type-row { grid-template-columns: minmax(0, 1fr) 56px 40px; gap: 8px; }
+    .conf { margin-left: 0; }
+    .evidence { flex-direction: column; gap: 2px; }
+    .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+  @media print {
+    .filters, .copy, .more, #theme, .skip { display: none !important; }
+    .card, .panel, .table-wrap, .fold { box-shadow: none; break-inside: avoid; }
+    body { background: #fff; }
+  }
+{% endraw %}
+</style>
+</head>
+<body>
+<a class="skip" href="#findings">Skip to findings</a>
+<header class="top">
+  <div class="wrap">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">lq</span>
+      <div>
+        <h1>Localization QA report</h1>
+        <p><span lang="{{ target_locale|replace('_', '-') }}">{{ target_locale }}</span> checked against <span lang="{{ source_locale|replace('_', '-') }}">{{ source_locale }}</span> &middot; locqa {{ version }}</p>
+      </div>
+    </div>
+    <button id="theme" class="ghost" type="button">Theme: auto</button>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="panel" aria-label="Run details">
+    <dl class="meta">
+      <div><dt>Source</dt><dd><code>{{ source_path or "(in memory)" }}</code> &middot; {{ source_locale }}{% if source_messages is not none %} &middot; {{ source_messages|num }} messages{% endif %}</dd></div>
+      <div><dt>Target</dt><dd><code>{{ target_path or "(in memory)" }}</code> &middot; {{ target_locale }}{% if target_messages is not none %} &middot; {{ target_messages|num }} messages{% endif %}</dd></div>
+      <div><dt>Context</dt><dd>{% if pivots %}pivots: {% for p in pivots %}<code title="{{ p.path or '' }}">{{ p.lang }}</code>{% if not loop.last %}, {% endif %}{% endfor %}{% else %}no pivot languages{% endif %} &middot; {% if glossary_path %}glossary <code>{{ glossary_path }}</code> ({{ glossary_entries|num }} entries){% else %}no glossary{% endif %}</dd></div>
+      <div><dt>Threshold</dt><dd>{% if min_confidence is not none %}reported when confidence &ge; {{ min_confidence }}{% else %}not recorded{% endif %}</dd></div>
+      <div><dt>Generated</dt><dd>{% if generated_at %}<time datetime="{{ generated_at }}">{{ generated_at }}</time>{% else %}unknown{% endif %}</dd></div>
+    </dl>
+  </section>
+
+  {% if detector_errors %}
+  <div class="alert" role="alert">
+    <strong>{{ detector_errors|length }} detector{{ "s" if detector_errors|length != 1 else "" }} failed</strong>; the report below is incomplete for {{ "them" if detector_errors|length != 1 else "it" }}.
+    {% for name, error in detector_errors %}
+    <details><summary><code>{{ name }}</code></summary><pre>{{ error }}</pre></details>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <section aria-labelledby="summary-h">
+    <div class="section-head"><h2 id="summary-h">Summary</h2><p>Click a card or a type to filter the findings.</p></div>
+    <div class="cards">
+      <button type="button" class="stat" data-reset><span class="n">{{ total|num }}</span><span class="l">findings reported</span></button>
+      {% for card in severity_cards %}
+      <button type="button" class="stat sev-{{ card.value }}" data-sev="{{ card.value }}" aria-pressed="false" title="{{ card.rubric }}"><span class="n">{{ card.count|num }}</span><span class="l">{{ card.value }} severity</span></button>
+      {% endfor %}
+      <a class="stat quiet" href="#advisory" data-open="advisory"><span class="n">{{ advisory_total|num }}</span><span class="l">advisory (below threshold)</span></a>
+      <a class="stat quiet" href="#lint" data-open="lint"><span class="n">{{ lint_total|num }}</span><span class="l">lint items</span></a>
+    </div>
+    <div class="panel" style="margin-top: 12px">
+      <h3>By issue type</h3>
+      {% if type_rows %}
+      <ul class="types">
+        {% for row in type_rows %}
+        <li><button type="button" class="type-row" data-type="{{ row.value }}" aria-pressed="false" title="{{ row.short }} ({{ (row.share * 100)|round(1) }}% of findings)">
+          <span class="name">{{ row.title }}<code>{{ row.value }}</code></span>
+          <span class="track" aria-hidden="true"><span style="width: {{ (row.bar * 100)|round(1) }}%"></span></span>
+          <span class="n">{{ row.count|num }}</span>
+        </button></li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="muted">No findings above the confidence threshold.</p>
+      {% endif %}
+    </div>
+  </section>
+
+  {% if heatmap.rows %}
+  <section aria-labelledby="sections-h">
+    <div class="section-head"><h2 id="sections-h">Issues by screen section</h2><p>Sections come from <code>@@comment</code> markers in the source file. Click a section or a cell to filter.</p></div>
+    <div class="table-wrap">
+      <table class="heat">
+        <thead><tr>
+          <th scope="col">Section</th>
+          <th scope="col" class="num">Total</th>
+          <th scope="col" class="num">H&nbsp;/&nbsp;M&nbsp;/&nbsp;L</th>
+          {% for t in heatmap.types %}<th scope="col" class="vert" title="{{ t }}"><span>{{ issue_titles[t] }}</span></th>{% endfor %}
+        </tr></thead>
+        <tbody>
+          {% for row in heatmap.rows %}
+          <tr{% if loop.index > heatmap.visible %} class="extra" hidden{% endif %}>
+            <th scope="row"><button type="button" class="linkish" data-section="{{ row.section if row.section is not none else '' }}" data-nosection="{{ '1' if row.section is none else '0' }}">{{ row.label }}</button></th>
+            <td class="num">{{ row.total|num }}</td>
+            <td class="num"><span class="sev-mini"><span class="h">{{ row.severity.high }}</span>/<span class="m">{{ row.severity.medium }}</span>/<span class="l">{{ row.severity.low }}</span></span></td>
+            {% for cell in row.cells %}
+            <td class="cell{% if cell.heat > 0.55 %} hot{% endif %}" style="--h: {{ cell.heat }}">{% if cell.count %}<button type="button" data-section="{{ row.section if row.section is not none else '' }}" data-nosection="{{ '1' if row.section is none else '0' }}" data-type="{{ cell.type }}" aria-label="{{ cell.count }} {{ cell.type }} in {{ row.label }}">{{ cell.count }}</button>{% endif %}</td>
+            {% endfor %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if heatmap.rows|length > heatmap.visible %}<button id="heat-more" type="button" class="more">Show all {{ heatmap.rows|length }} sections</button>{% endif %}
+  </section>
+  {% endif %}
+
+  <section id="findings" aria-labelledby="findings-h">
+    <div class="section-head"><h2 id="findings-h">Findings</h2><p>Press <kbd>/</kbd> to search.</p></div>
+    <div class="filters" role="search">
+      <label class="sr-only" for="q">Search findings</label>
+      <input id="q" type="search" placeholder="Search key, source, target, evidence&hellip;" autocomplete="off" spellcheck="false">
+      <details class="dropdown" id="type-dd">
+        <summary>Issue type: <span id="type-label">all</span></summary>
+        <div class="menu" id="type-menu" role="group" aria-label="Issue types"></div>
+      </details>
+      <div class="chips" role="group" aria-label="Severity">
+        <button type="button" class="chip high" data-sev="high" aria-pressed="false">High</button>
+        <button type="button" class="chip medium" data-sev="medium" aria-pressed="false">Medium</button>
+        <button type="button" class="chip low" data-sev="low" aria-pressed="false">Low</button>
+      </div>
+      <label class="inline">Section <select id="section"></select></label>
+      <label class="inline">Sort <select id="sort">
+        <option value="default">Severity, file order</option>
+        <option value="confidence">Confidence, highest first</option>
+        <option value="line">Line in target file</option>
+        <option value="type">Issue type</option>
+        <option value="key">Key A&ndash;Z</option>
+      </select></label>
+      <button id="reset" type="button" class="ghost">Reset</button>
+    </div>
+    <p id="count" class="count" aria-live="polite">{{ total|num }} findings</p>
+    <div id="list" class="list">
+      <noscript><p class="notice">JavaScript is off, so the findings list is not shown. The summary above is complete, and every finding is in report.json.</p></noscript>
+    </div>
+    <button id="more" type="button" class="more" hidden>Show more</button>
+  </section>
+
+  <details id="advisory" class="fold">
+    <summary><h2>Advisory (below confidence threshold)</h2><span class="pill">{{ advisory_total|num }}</span></summary>
+    <div class="fold-body">
+      <p>Findings with confidence below {{ min_confidence if min_confidence is not none else "the threshold" }}. They are kept for reviewers but are not in report.json or SARIF. The filters above apply here too.</p>
+      <p id="adv-count" class="count" aria-live="polite"></p>
+      <div id="adv-list" class="list"></div>
+      <button id="adv-more" type="button" class="more" hidden>Show more</button>
+    </div>
+  </details>
+
+  <details id="lint" class="fold">
+    <summary><h2>Lint (file-level problems)</h2><span class="pill">{{ lint_total|num }}</span></summary>
+    <div class="fold-body">
+      <p>Problems outside the issue taxonomy, such as duplicate or extra keys. They are reported separately and never counted as findings.</p>
+      {% if lint_total %}
+      <div class="filters">
+        <label class="sr-only" for="lint-q">Search lint</label>
+        <input id="lint-q" type="search" placeholder="Search key, rule, message&hellip;" autocomplete="off" spellcheck="false">
+        <label class="inline">Rule <select id="lint-rule"></select></label>
+      </div>
+      <p id="lint-count" class="count" aria-live="polite"></p>
+      <div class="table-wrap">
+        <table class="lint">
+          <thead><tr><th scope="col">Severity</th><th scope="col">Rule</th><th scope="col">Key</th><th scope="col" class="num">Line</th><th scope="col">Message</th></tr></thead>
+          <tbody id="lint-body"></tbody>
+        </table>
+      </div>
+      <button id="lint-more" type="button" class="more" hidden>Show more</button>
+      {% else %}
+      <p>No lint items.</p>
+      {% endif %}
+    </div>
+  </details>
+
+  <footer id="methodology" class="method panel">
+    <h2>Methodology</h2>
+    <div class="grid">
+      <div>
+        <h3>Severity</h3>
+        <ul class="rubric">
+          {% for item in rubric %}
+          <li><span class="badge sev {{ item.value }}">{{ item.value }}</span><span>{{ item.text }}</span></li>
+          {% endfor %}
+        </ul>
+        <h3 style="margin-top: 16px">Confidence</h3>
+        <p>Each detector gives every finding a confidence between 0 and 1. A value of 0.9 or more is a near-certain rule hit, such as a placeholder that lost its braces. Values from 0.6 to 0.85 are likely problems that deserve a reviewer&rsquo;s look. Anything below the threshold{% if min_confidence is not none %} of {{ min_confidence }}{% endif %} goes to the Advisory list and stays out of report.json and SARIF.</p>
+        <p>There is at most one finding per key and issue type. When several detectors flag the same problem, the most confident one is kept and the others are listed under &ldquo;also reported by&rdquo;.</p>
+        <h3 style="margin-top: 16px">This file</h3>
+        <p>The report works offline and makes no network requests. Text from the ARB files is shown as plain text, and a Content-Security-Policy blocks every script except the report&rsquo;s own.</p>
+      </div>
+      <div>
+        <h3>Issue types</h3>
+        <dl>
+          {% for item in issue_docs %}
+          <dt>{{ item.doc.title }}<code>{{ item.value }}</code></dt>
+          <dd>{{ item.doc.help }}</dd>
+          {% endfor %}
+        </dl>
+        {% if lint_docs %}
+        <h3 style="margin-top: 16px">Lint rules in this run</h3>
+        <dl>
+          {% for rule in lint_docs %}
+          <dt><code>{{ rule }}</code></dt>
+          <dd>{{ lint_help.get(rule, "File-level check.") }}</dd>
+          {% endfor %}
+        </dl>
+        {% endif %}
+      </div>
+    </div>
+    {% if detectors %}
+    <h3 style="margin-top: 20px">Detectors</h3>
+    <div class="table-wrap" style="margin-top: 8px">
+      <table>
+        <thead><tr><th scope="col">Detector</th><th scope="col" class="num">Findings</th><th scope="col" class="num">Advisory</th><th scope="col" class="num">Lint</th><th scope="col" class="num">Time</th></tr></thead>
+        <tbody>
+          {% for d in detectors %}
+          <tr><td><code>{{ d.name }}</code>{% if d.failed %} <span class="badge high">failed</span>{% endif %}</td><td class="num">{{ d.findings|num }}</td><td class="num">{{ d.advisory|num }}</td><td class="num">{{ d.lint|num }}</td><td class="num">{% if d.seconds is not none %}{{ "%.2f"|format(d.seconds) }} s{% else %}&ndash;{% endif %}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  </footer>
+  <p class="foot">Generated by locqa {{ version }}{% if generated_at %} on {{ generated_at }}{% endif %}.</p>
+</main>
+<script type="application/json" id="locqa-data">{{ payload|tojson_safe }}</script>
+<script>{{ app_js|safe }}</script>
+</body>
+</html>
