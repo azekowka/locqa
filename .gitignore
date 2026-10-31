@@ -10,3 +10,7 @@ build/
 report*.json
 report*.html
 *.sarif
+
+# Confidential case data: keep local, never commit
+docs/intl_*.arb
+*.tgz
