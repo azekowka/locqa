@@ -11,7 +11,7 @@ WL = "wrong_language"
 # Ordinary Kazakh translations so the file has a clear script and vocabulary.
 KK_BASE = {
     "b1": ("Открыть карту города", "Қала картасын ашу", "Open the city map", "Shahar xaritasini ochish"),
-    "b2": ("Громкость звука", "Дыбыс деңгейі", "Sound volume", "Ovoz balandligi"),
+    "b2": ("Громкость звука", "Дыбыс деңгейі", "Sound volume", "Ovoz darajasi"),
     "b3": ("Купить новый дом", "Жаңа үй сатып алу", "Buy a new house", "Yangi uy sotib olish"),
     "b4": ("Ваш профиль", "Сіздің профиліңіз", "Your profile", "Sizning profilingiz"),
 }
