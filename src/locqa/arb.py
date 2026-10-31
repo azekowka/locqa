@@ -265,6 +265,15 @@ class ArbEditor:
         anchor = self._anchor(after) if after else None
         self._insert_after(anchor, key, value)
 
+    def insert_message(self, key: str, value: str, metadata: dict[str, Any] | None = None, after: str | None = None) -> None:
+        """Add a key that the document lacks, with its ``@key`` right below it."""
+        if self.doc.occurrences.get(key):
+            raise ValueError(f"key {key!r} already exists")
+        anchor = self._anchor(after) if after else None
+        self._insert_after(anchor, key, value)
+        if metadata:
+            self._insert_after(anchor, "@" + key, metadata)
+
     def set_metadata(self, key: str, values: dict[str, Any]) -> None:
         """Merge ``values`` into ``@key``, creating it right after the message if needed."""
         meta_key = "@" + key

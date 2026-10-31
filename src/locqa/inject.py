@@ -360,6 +360,13 @@ class _Injector:
             for entry, corrupted, recipe, extra in recipes[issue_type](rng):
                 if entry.key in self.used or corrupted == entry.target:
                     continue
+                # A swap that lands on the source text is a same_as_source error, not the one asked for.
+                if (
+                    corrupted is not None
+                    and issue_type is not IssueType.SAME_AS_SOURCE
+                    and textutil.normalize(corrupted) == textutil.normalize(entry.source)
+                ):
+                    continue
                 self.apply(entry, issue_type, corrupted, recipe, extra)
                 done += 1
                 if done >= quota:

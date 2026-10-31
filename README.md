@@ -28,6 +28,7 @@ python -m pytest -q
 | Command | What it does |
 |---|---|
 | `locqa check` | Checks a target ARB against its source; writes `report.json`, an HTML report and a full JSON. |
+| `locqa fix` | Writes `<target>_fixed.arb`: applies confident suggestions and reviewed overrides, re-checks the result, flags every changed key for human review. |
 | `locqa translit` | Transliterates Kazakh Cyrillic to the 2021 Latin alphabet and lists strings that would overflow. |
 | `locqa inject` | Seeds synthetic errors into a target file and writes an answer key. |
 | `locqa eval` | Scores a `report.json` against an answer key (recall and precision per issue type). |
@@ -114,11 +115,25 @@ Rules first, then statistics; no LLM is required. Each detector is a small class
 | `suffix` | Kazakh case suffixes glued to a placeholder (`{name}-ға`): wrong for half of all runtime values. Suggests a rewording that keeps the suffix off the placeholder. |
 | `orthography` | Latin homoglyphs inside Cyrillic words; Kazakh letters typed as Russian look-alikes (`жане` vs the frequent `және`). |
 | `wrong_language` | Script and marker-word scoring, Uzbek orthographic markers, identity with another language's translation of the same key. |
+| `mt_suspect` | The file is its own dictionary (ru↔kk stem co-occurrence, Dice). Flags a translation copied from an unrelated key, a translation that renders none of the source's words, and, as advisory, wrong-sense short strings. |
 | `lint` | Duplicate keys (and conflicting duplicates), extra keys, tag and whitespace mismatches. |
 
 Language-specific checks consult a language profile (`src/locqa/lang/profiles.py`) and stay quiet for languages they do not know, so the tool runs on any ARB pair without changes.
 
 The ARB reader keeps duplicate keys and every `@@comment` (strict JSON loaders keep only the last one) and uses the comments as screen sections for context. The writer edits only the spans it changes, so a fixed file diffs cleanly.
+
+### `locqa fix`
+
+```bash
+locqa fix --source intl_ru.arb --target intl_kk.arb --glossary glossary.csv --pivot en=intl_en.arb --overrides reviewed.json --out intl_kk_fixed.arb
+```
+
+1. A fix comes from `--overrides` (`{"key": "text"}`, from a translator or an LLM) or from a finding's suggestion with confidence ≥ `--min-confidence` (0.7).
+2. A fix must keep the source's placeholders and parse as ICU.
+3. The fixed file is checked again. If a fix exposes a second problem, that problem's suggestion is chained in once. A fix that makes the key worse is rolled back.
+4. Every changed key gets `"@key": {"x-locqa": {"reviewed_by_human": false, "original": ..., "issue_types": [...], "evidence": ...}}`.
+
+The command also writes `<out>.fixes.json` (a change log) and `<out>.review.csv` (a reviewer sheet with an empty verdict column). Only message values and `@key` metadata change, so the file compiles with `flutter gen-l10n` wherever the input did.
 
 ## Measuring honestly
 
@@ -127,6 +142,8 @@ The ARB reader keeps duplicate keys and every `@@comment` (strict JSON loaders k
 ```bash
 locqa bench --source intl_ru.arb --target intl_kk.arb --pivot en=intl_en.arb --pivot uz=intl_uz.arb --per-type 8 --seeds 3
 ```
+
+Results on the case pair: micro recall 0.86 and precision 0.87 on 270 injected errors. Details are in [docs/BENCHMARK.md](docs/BENCHMARK.md), the approach in [docs/METHODOLOGY.md](docs/METHODOLOGY.md), and the Uzbek bonus in [docs/UZBEK.md](docs/UZBEK.md).
 
 ## Kazakh Latin transliteration
 

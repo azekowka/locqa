@@ -196,6 +196,63 @@ def check(
 
 
 @app.command()
+def fix(
+    source: Annotated[Path, typer.Option(help="Source-language ARB (e.g. intl_ru.arb).")],
+    target: Annotated[Path, typer.Option(help="Target-language ARB to fix (e.g. intl_kk.arb).")],
+    out: Annotated[Optional[Path], typer.Option(help="Fixed ARB (default: <target>_fixed.arb).")] = None,
+    glossary: Annotated[Optional[Path], typer.Option(help="Glossary CSV.")] = None,
+    pivot: Annotated[Optional[list[str]], typer.Option(help="Extra translation as context, LANG=PATH.")] = None,
+    overrides: Annotated[
+        Optional[Path], typer.Option(help="JSON of reviewed fixes, {key: text}; they win over suggestions.")
+    ] = None,
+    review: Annotated[Optional[Path], typer.Option(help="Reviewer sheet CSV (default: <out>.review.csv).")] = None,
+    log: Annotated[Optional[Path], typer.Option(help="JSON log of every change (default: <out>.fixes.json).")] = None,
+    min_confidence: Annotated[float, typer.Option(help="Only apply suggestions at least this confident.")] = 0.7,
+    source_locale: Annotated[Optional[str], typer.Option(help="Override the source locale.")] = None,
+    target_locale: Annotated[Optional[str], typer.Option(help="Override the target locale.")] = None,
+    quiet: Annotated[bool, typer.Option("--quiet", "-q", help="Print nothing on success.")] = False,
+) -> None:
+    """Write a corrected ARB; every changed key is flagged for human review in its @key metadata."""
+    import csv
+
+    from locqa.fix import build_fixes, load_overrides, review_rows
+
+    ctx = build_context(source, target, glossary, pivot, source_locale, target_locale, CheckConfig())
+    result = run_checks(ctx)
+
+    def recheck(doc: ArbDocument) -> CheckResult:
+        fixed_ctx = CheckContext(
+            source=ctx.source, target=doc, glossary=ctx.glossary, pivots=ctx.pivots, config=ctx.config,
+            source_locale=ctx.source_locale, target_locale=ctx.target_locale,
+        )
+        return run_checks(fixed_ctx)
+
+    fixed = build_fixes(
+        ctx, result, recheck, overrides=load_overrides(overrides) if overrides else None, min_confidence=min_confidence
+    )
+    out = out or target.with_name(target.stem + "_fixed.arb")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(fixed.text, encoding="utf-8", newline="\n")
+    log = log or out.with_name(out.stem + ".fixes.json")
+    log.write_text(
+        _dump({"summary": fixed.summary(), "fixes": [f.to_dict() for f in fixed.fixes]}), encoding="utf-8"
+    )
+    review = review or out.with_name(out.stem + ".review.csv")
+    rows = review_rows(ctx, fixed)
+    with review.open("w", encoding="utf-8-sig", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(rows[0]) if rows else ["key"])
+        writer.writeheader()
+        writer.writerows(rows)
+    if not quiet:
+        summary = fixed.summary()
+        typer.echo(
+            f"{summary['changed_keys']} keys changed ({summary['by_status']}), "
+            f"{summary['left_for_review']} findings left for a translator -> {out}"
+        )
+        typer.echo(f"Review sheet: {review}\nChange log: {log}")
+
+
+@app.command()
 def inject(
     source: Annotated[Path, typer.Option(help="Source-language ARB.")],
     target: Annotated[Path, typer.Option(help="Target ARB to corrupt.")],

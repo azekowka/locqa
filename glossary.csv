@@ -37,7 +37,7 @@ Summer Rush,Summer Rush,Summer Rush,Event name. Keep Latin.,,,,brand,draft
 квартира,пәтер,apartment,Player apartment (real estate).,,,,term,draft
 недвижимость,жылжымайтын мүлік,real estate,Real estate. мүлік (property) is accepted.,мүлік,,,term,draft
 автомобиль,көлік,vehicle,Vehicle. автокөлік and машина are accepted.,автокөлік|автомобиль|машина|авто,,машина|транспорт|авто,term,draft
-работа,жұмыс,job,Job or work.,,,,term,draft
+работа,жұмыс,job,Job or work.,қызмет,,,term,draft
 полиция,полиция,police,Police faction.,,,,term,draft
 такси,такси,taxi,Taxi job.,,,,term,draft
 мэр,әкім,mayor,City mayor (government faction).,мэр,,,term,draft
@@ -79,7 +79,7 @@ Summer Rush,Summer Rush,Summer Rush,Event name. Keep Latin.,,,,brand,draft
 контракт,келісімшарт,contract,Contract. контракт and келісім are accepted.,контракт|келісім,,,term,draft
 ресурсы,ресурстар,resources,Crafting resources (dominant form).,ресурс,,,term,draft
 крафт,крафт,crafting,Crafting. Not қолөнер (handicraft).,,қолөнер,,term,draft
-бустер,бустер,booster,Keep the loanword.,,,,term,draft
+бустер,бустер,booster,Booster. The loanword is preferred; күшейткіш is an accepted Kazakh rendering.,күшейткіш,,,term,draft
 улучшение,жақсарту,upgrade,Upgrade.,,,,term,draft
 токен,токен,token,Event token.,,,,term,draft
 валюта,валюта,currency,In-game currency.,,,,term,draft
@@ -97,3 +97,5 @@ Summer Rush,Summer Rush,Summer Rush,Event name. Keep Latin.,,,,brand,draft
 сундук,сандық,chest,Treasure chest.,,,,term,draft
 контейнер,контейнер,container,Container auction.,,,,term,draft
 репутация,бедел,reputation,Reputation. репутация is accepted.,репутация,,,term,draft
+лимит,лимит,limit,Limit. шектеу is an accepted Kazakh rendering.,шектеу,,,term,draft
+товар,тауар,goods,Shop goods. зат (item) is accepted in purchase confirmations.,зат,,,term,draft

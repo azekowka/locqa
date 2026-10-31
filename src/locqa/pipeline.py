@@ -67,6 +67,11 @@ def _merge(findings: Iterable[Finding]) -> list[Finding]:
     return list(best.values())
 
 
+CALIBRATED_LANGS = frozenset({"kk"})
+STATISTICAL_DETECTORS = frozenset({"inconsistent", "mt_suspect"})
+UNCALIBRATED_FACTOR = 0.65
+
+
 def run_checks(ctx: CheckContext, detectors: list[Detector] | None = None) -> CheckResult:
     detectors = detectors if detectors is not None else all_detectors()
     raw: list[Finding] = []
@@ -94,6 +99,14 @@ def run_checks(ctx: CheckContext, detectors: list[Detector] | None = None) -> Ch
 
     if ctx.config.only is not None:
         raw = [f for f in raw if f.issue_type in ctx.config.only]
+
+    # Corpus-statistics detectors were calibrated by a reader on Kazakh only; elsewhere
+    # synonyms and free word order look like drift, so their findings default to advisory.
+    if ctx.target_lang not in CALIBRATED_LANGS:
+        for finding in raw:
+            if finding.detector in STATISTICAL_DETECTORS:
+                finding.confidence = round(finding.confidence * UNCALIBRATED_FACTOR, 3)
+                finding.extra.setdefault("uncalibrated_language", ctx.target_lang)
 
     order = {entry.key: entry.index for entry in ctx.entries}
     for finding in raw:

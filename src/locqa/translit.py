@@ -30,6 +30,8 @@ _UPPER_SPECIAL = {"и": "İ", "й": "İ", "ё": "İo", "ю": "İu", "я": "İa",
 
 def _upper(cyrillic_lower: str, whole_word_upper: bool) -> str:
     latin = _UPPER_SPECIAL.get(cyrillic_lower) or KK_LATIN_2021[cyrillic_lower].capitalize()
+    if not latin:  # Ъ and Ь have no Latin letter
+        return ""
     if whole_word_upper:
         # 'İo' -> 'İO'; avoid str.upper() on 'i', which would drop the dot distinction.
         return latin[0] + latin[1:].upper()

@@ -20,6 +20,7 @@ MODULES = (
     "suffix",
     "orthography",
     "wrong_language",
+    "mt_suspect",
     "lint",
 )
 
